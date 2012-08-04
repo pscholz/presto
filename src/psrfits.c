@@ -1045,16 +1045,17 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
                 // that the data are properly offset so that the min values
                 // are at values of zero...
                 global_scale = (256.0/3.0) / fmed;
-                {
-                    char *envval = getenv("ZERODM");
-                    if (envval != NULL) {
-                        remove_zerodm = 1;
-                        printf("\nZERODM set:  performing Zero-DM Subtraction!");
-                    }
-                }
                 printf("\nSetting PSRFITS global scale to %f\n", global_scale);
                 vect_free(fvec);
 
+            }
+            // Check to see if we are using the ZERODM hack
+            {
+                char *envval = getenv("ZERODM");
+                if (envval != NULL) {
+                    remove_zerodm = 1;
+                    printf("\nZERODM set:  performing zero-DM subtraction\n");
+                }
             }
             firsttime = 0;
         }
@@ -1129,25 +1130,31 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
         }
 
         // Clip nasty RFI if requested
-        if (S.clip_sigma > 0.0)  {
+        if (S.clip_sigma > 0.0) {
             clip_times(dataptr, S.spectra_per_subint, S.num_channels, 
                        S.clip_sigma, newpadvals);
         }
 
         // Perform Zero-DMing if called for it by the environment variable hack
         if (remove_zerodm) {
-            int ii, jj, offset;
+            int ii, jj, offset, dc = 64;
             float zerodm, ftmp, padvalsum = 0.0, *chanwts;
 
-            // Determine the sum of newpadvals for weighting of the channels
-            for (ii = 0; ii < S.num_channels; ii++)
-                padvalsum += newpadvals[ii];
-
-            // Set the channel weights for this block
             chanwts = gen_fvect(S.num_channels);
-            for (ii = 0; ii < S.num_channels; ii++)
-                //chanwts[ii] = (float) newpadvals[ii] / padvalsum;
-                chanwts[ii] = 1.0 / (float) S.num_channels;
+            if (S.clip_sigma > 0.0) {
+                // Determine the sum of newpadvals for weighting of the channels
+                for (ii = 0; ii < S.num_channels; ii++)
+                    padvalsum += newpadvals[ii];
+                // Set the channel weights for this block
+                for (ii = 0; ii < S.num_channels; ii++) {
+                    chanwts[ii] = (float) newpadvals[ii] / padvalsum;
+                    // somehow we need to change the values for padding too...
+                    // newpadvals[ii] = dc;
+                }
+            } else {
+                for (ii = 0; ii < S.num_channels; ii++) 
+                    chanwts[ii] = 1.0 / S.num_channels;
+            }
 
             // Now loop over all the spectra...
             for (ii = 0; ii < S.spectra_per_subint; ii++) {
@@ -1157,11 +1164,12 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
                 for (jj = 0; jj < S.num_channels; jj++) 
                     zerodm += dataptr[offset+jj];
                 // Subtract off the correct amount of power from each point
-                offset = ii * S.num_channels;
                 for (jj = 0; jj < S.num_channels; jj++) {
-                    ftmp = 64.0 + (float) dataptr[offset+jj] - chanwts[jj] * zerodm;
+                    // Put a DC offset in since we are subtracting comparable size
+                    // numbers and the data are unsigned chars...
+                    ftmp = dc + (float) dataptr[offset+jj] - chanwts[jj] * zerodm + 0.5;
                     //printf("%d %d:  %d  %f", ii, jj, *powptr, chanwts[jj] * zerodm);
-                    dataptr[offset+jj] = (unsigned char)(ftmp + 0.5); 
+                    dataptr[offset+jj] = (unsigned char)ftmp; 
                     //dataptr[offset+jj] = (ftmp > 0.0) ? (unsigned char)(ftmp + 0.5) : 0; 
                     //printf(" %d\n", *powptr++);
                 }
@@ -1175,7 +1183,6 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
             memcpy(data, ringbuffer, S.bytes_per_subint/S.num_polns);
         cur_subint++;
         return 1;
-        
     
     } else { // We can't read anymore...  so read OFFS_SUB
         // for the last row of the current file to see about padding
