@@ -7,7 +7,7 @@
 #define DEBUGOUT 1
 
 static struct spectra_info S;
-static unsigned char *rawbuffer, *ringbuffer, *tmpbuffer;
+static unsigned char *rawbuffer, *ringbuffer, *tmpbuffer, *bandpass;
 static float *offsets, *scales, global_scale = 1.0;
 static unsigned char *padvals=NULL, *newpadvals=NULL;
 static int cur_file = 0, cur_subint = 1, cur_specoffs = 0, padval = 0;
@@ -1057,7 +1057,6 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
                     printf("\nZERODM set:  performing zero-DM subtraction\n");
                 }
             }
-            firsttime = 0;
         }
 
         // Apply offsets and scales if needed
@@ -1137,20 +1136,31 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
 
         // Perform Zero-DMing if called for it by the environment variable hack
         if (remove_zerodm) {
-            int ii, jj, offset, dc = 64;
+            int ii, jj, offset;
             float zerodm, ftmp, padvalsum = 0.0, *chanwts;
 
+            // Make a static copy of the bandpass to use as DC offsets for each
+            // channel.  This is necessary when masking as the newpadvals are
+            // used to mask.  So our post-zero-DM-subtracted band had better look
+            // kinda like newpadvals.  We want it static so that we don't get a 
+            // different DC offset for each row of the FITS file (which will put
+            // a nice periodicity in the data).
+            if (firsttime) {
+                bandpass = gen_bvect(S.num_channels);
+                for (ii = 0; ii < S.num_channels; ii++)
+                    bandpass[ii] = newpadvals[ii];
+            }
+
+            // Determine what weights to use for each channel for 
+            // the zero-DM subtraction
             chanwts = gen_fvect(S.num_channels);
             if (S.clip_sigma > 0.0) {
                 // Determine the sum of newpadvals for weighting of the channels
                 for (ii = 0; ii < S.num_channels; ii++)
                     padvalsum += newpadvals[ii];
                 // Set the channel weights for this block
-                for (ii = 0; ii < S.num_channels; ii++) {
+                for (ii = 0; ii < S.num_channels; ii++)
                     chanwts[ii] = (float) newpadvals[ii] / padvalsum;
-                    // somehow we need to change the values for padding too...
-                    // newpadvals[ii] = dc;
-                }
             } else {
                 for (ii = 0; ii < S.num_channels; ii++) 
                     chanwts[ii] = 1.0 / S.num_channels;
@@ -1165,18 +1175,17 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
                     zerodm += dataptr[offset+jj];
                 // Subtract off the correct amount of power from each point
                 for (jj = 0; jj < S.num_channels; jj++) {
-                    // Put a DC offset in since we are subtracting comparable size
-                    // numbers and the data are unsigned chars...
-                    ftmp = dc + (float) dataptr[offset+jj] - chanwts[jj] * zerodm + 0.5;
-                    //printf("%d %d:  %d  %f", ii, jj, *powptr, chanwts[jj] * zerodm);
-                    dataptr[offset+jj] = (unsigned char)ftmp; 
-                    //dataptr[offset+jj] = (ftmp > 0.0) ? (unsigned char)(ftmp + 0.5) : 0; 
-                    //printf(" %d\n", *powptr++);
+                    // Put the bandpass back in since we are subtracting comparable
+                    // sized numbers and the data are unsigned chars...
+                    ftmp = (float) dataptr[offset+jj] - chanwts[jj] * zerodm + \
+                        bandpass[jj] + 0.5;
+                    dataptr[offset+jj] = (ftmp > 0.0) ? (unsigned char)ftmp : 0;
                 }
             }
             vect_free(chanwts);
         }
 
+        if (firsttime) firsttime = 0;
         *padding = 0;
         // Pull the new data from the ringbuffer if there is an offset
         if (bufferspec)
