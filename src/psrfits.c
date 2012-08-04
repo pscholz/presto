@@ -12,7 +12,7 @@ static float *offsets, *scales, global_scale = 1.0;
 static unsigned char *padvals=NULL, *newpadvals=NULL;
 static int cur_file = 0, cur_subint = 1, cur_specoffs = 0, padval = 0;
 static int bufferspec = 0, padnum = 0, shiftbuffer = 1, missing_blocks = 0;
-static int using_MPI = 0, default_poln = 0, user_poln = 0;
+static int using_MPI = 0, default_poln = 0, user_poln = 0, remove_zerodm = 0;
 static double last_offs_sub = 0.0;
 
 extern double slaCldj(int iy, int im, int id, int *j);
@@ -1045,6 +1045,13 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
                 // that the data are properly offset so that the min values
                 // are at values of zero...
                 global_scale = (256.0/3.0) / fmed;
+                {
+                    char *envval = getenv("ZERODM");
+                    if (envval != NULL) {
+                        remove_zerodm = 1;
+                        printf("\nZERODM set:  performing Zero-DM Subtraction!");
+                    }
+                }
                 printf("\nSetting PSRFITS global scale to %f\n", global_scale);
                 vect_free(fvec);
 
@@ -1120,11 +1127,48 @@ int read_PSRFITS_rawblock(unsigned char *data, int *padding)
                    cur_file, cur_subint);
             exit(1);
         }
+
         // Clip nasty RFI if requested
         if (S.clip_sigma > 0.0)  {
             clip_times(dataptr, S.spectra_per_subint, S.num_channels, 
                        S.clip_sigma, newpadvals);
         }
+
+        // Perform Zero-DMing if called for it by the environment variable hack
+        if (remove_zerodm) {
+            int ii, jj, offset;
+            float zerodm, ftmp, padvalsum = 0.0, *chanwts;
+
+            // Determine the sum of newpadvals for weighting of the channels
+            for (ii = 0; ii < S.num_channels; ii++)
+                padvalsum += newpadvals[ii];
+
+            // Set the channel weights for this block
+            chanwts = gen_fvect(S.num_channels);
+            for (ii = 0; ii < S.num_channels; ii++)
+                //chanwts[ii] = (float) newpadvals[ii] / padvalsum;
+                chanwts[ii] = 1.0 / (float) S.num_channels;
+
+            // Now loop over all the spectra...
+            for (ii = 0; ii < S.spectra_per_subint; ii++) {
+                // Determine the DM=0 total power for this spectra
+                zerodm = 0.0;
+                offset = ii * S.num_channels;
+                for (jj = 0; jj < S.num_channels; jj++) 
+                    zerodm += dataptr[offset+jj];
+                // Subtract off the correct amount of power from each point
+                offset = ii * S.num_channels;
+                for (jj = 0; jj < S.num_channels; jj++) {
+                    ftmp = 64.0 + (float) dataptr[offset+jj] - chanwts[jj] * zerodm;
+                    //printf("%d %d:  %d  %f", ii, jj, *powptr, chanwts[jj] * zerodm);
+                    dataptr[offset+jj] = (unsigned char)(ftmp + 0.5); 
+                    //dataptr[offset+jj] = (ftmp > 0.0) ? (unsigned char)(ftmp + 0.5) : 0; 
+                    //printf(" %d\n", *powptr++);
+                }
+            }
+            vect_free(chanwts);
+        }
+
         *padding = 0;
         // Pull the new data from the ringbuffer if there is an offset
         if (bufferspec)
