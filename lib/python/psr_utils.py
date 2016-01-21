@@ -69,8 +69,7 @@ def choose_N(orig_N):
     two_N = 2
     while two_N < orig_N:
         two_N *= 2
-    if two_N < new_N: return two_N
-    else: return new_N
+    return min(two_N, new_N)
 
 def running_avg(arr, navg):
     """
@@ -528,6 +527,56 @@ def shklovskii_effect(pm, D):
         or equivalently, Pdot_pm/P.
     """
     return (pm/1000.0*ARCSECTORAD/SECPERJULYR)**2.0 * KMPERKPC*D / (C/1000.0)
+
+def galactic_accel_simple(l, b, D, v_o=240.0, R_o = 8.34):
+    """
+    galactic_accel_simple(l, b, D, v_o=240.0, R_o = 8.34):
+        Return the approximate projected acceleration/c (in s^-1)
+        (a_p - a_ssb) dot n / c, where a_p and a_ssb are acceleration
+        vectors, and n is the los vector.  This assumes a simple spherically
+        symmetric isothermal sphere with v_o = 220 km/s circular velocity
+        and R_o = 8 kpc to the center of the sphere from the SSB.  l and
+        b are the galactic longitude and latitude (in deg) respectively,
+        and D is the distance in kpc.  This is eqn 2.4 of Phinney 1992.
+        The default v_o and R_o values are from Reid et al 2014.
+    """
+    A_sun = v_o*v_o / (C/1000.0 * R_o*KMPERKPC)
+    d = D/R_o
+    cbcl = Num.cos(b*DEGTORAD) * Num.cos(l*DEGTORAD)
+    return -A_sun * (cbcl + (d - cbcl) / (1.0 + d*d - 2.0*d*cbcl))
+
+def galactic_accel(l, b, D, v_o=240.0, R_o = 8.34):
+    """
+    galactic_accel(l, b, D, v_o=240.0, R_o = 8.34):
+        Return the approximate projected acceleration/c (in s^-1)
+        (a_p - a_ssb) dot n / c, where a_p and a_ssb are acceleration
+        vectors, and n is the los vector.  This assumes v_o = 220 km/s
+        circular velocity and R_o = 8 kpc to the center of Galaxy.  l and
+        b are the galactic longitude and latitude (in deg) respectively,
+        and D is the distance in kpc.  This is eqn 5 of Nice & Taylor 1995.
+        The default v_o and R_o values are from Reid et al 2014.
+    """
+    A_sun = v_o*v_o / (C/1000.0 * R_o*KMPERKPC)
+    cb = Num.cos(b*DEGTORAD)
+    cl = Num.cos(l*DEGTORAD)
+    sl = Num.sin(l*DEGTORAD)
+    beta = D/R_o * cb - cl
+    return -A_sun * cb * (cl + beta / (sl**2 + beta**2))
+
+def gal_z_accel(l, b, D):
+    """
+    gal_z_accel(l, b, D):
+        Return the approximate projected acceleration/c (in s^-1)
+        (a_p - a_ssb) dot n / c, where a_p and a_ssb are acceleration
+        vectors, and n is the los vector, caused by the acceleration
+        of the pulsar towards the plane of the galaxy.  l and b are
+        the galactic longitude and latitude (in deg) respectively, and D
+        is the distance in kpc.  This is eqn 3+4 of Nice & Taylor 1995.
+    """
+    sb = Num.sin(b*DEGTORAD)
+    z = D * sb
+    az = 1.08e-19 * (1.25 * z / Num.sqrt(z**2 + 0.0324) + 0.58 * z)
+    return az * sb
 
 def beam_halfwidth(obs_freq, dish_diam):
     """

@@ -30,13 +30,15 @@ class pfd:
         self.telescope = infile.read(struct.unpack(swapchar+"i", infile.read(4))[0])
         self.pgdev = infile.read(struct.unpack(swapchar+"i", infile.read(4))[0])
         test = infile.read(16)
-        if not test[:8]=="Unknown":
+        if not test[:8]=="Unknown" and ':' in test:
             self.rastr = test[:test.find('\0')]
             test = infile.read(16)
             self.decstr = test[:test.find('\0')]
         else:
             self.rastr = "Unknown"
             self.decstr = "Unknown"
+            if ':' not in test:
+                infile.seek(-16, 1) # rewind the file before the bad read
         (self.dt, self.startT) = struct.unpack(swapchar+"dd", infile.read(2*8))
         (self.endT, self.tepoch, self.bepoch, self.avgvoverc, self.lofreq, \
          self.chan_wid, self.bestdm) = struct.unpack(swapchar+"d"*7, infile.read(7*8))
@@ -532,6 +534,7 @@ class pfd:
         """
         # Use the same scaling as in prepfold_plot.c
         global_max = Num.maximum.reduce(Num.maximum.reduce(array2d))
+        if (global_max==0.0):  global_max = 1.0
         min_parts = Num.minimum.reduce(array2d, 1)
         array2d = (array2d-min_parts[:,Num.newaxis])/Num.fabs(global_max)
         Pgplot.plot2d(array2d, image='antigrey', **kwargs)

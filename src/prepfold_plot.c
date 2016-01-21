@@ -456,7 +456,7 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
          pdd_delays[ii] = fdotdot2phasedelay(dfdd, parttimes[ii]);
 
       {                         /* Correct for and fold the best profile */
-         double *tmp_profs, gmin, gmax;
+         double *tmp_profs, gmin = 1e100, gmax = -1e100;
 
          bestprof = gen_fvect(2 * search->proflen);
          dbestprof = gen_dvect(search->proflen);
@@ -467,6 +467,8 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
 
          /* Determine the global min and max in the profiles */
          dminmax(ddprofs, search->npart * search->proflen, &gmin, &gmax);
+         // Take care of a possible rare corner case
+         if (gmax==0.0) gmax = 1.0;
 
          /* Compute the errors in fdot, and f to correct */
          df = 1.0 / bestp - search->fold.p1;
@@ -1268,26 +1270,18 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
       }
       cpgclos();
       if (ct==0) {
-          // Attempt to change the .ps into a nice .png using latex2html...
-          int retval=0;
-          char *command;
-          command = (char *)malloc(2 * strlen(search->pgdev) + 60);
-          // First test to see if pstoimg exists
-          strcpy(command, "which pstoimg >& /dev/null");
-          retval = system(command);
-          // If the command exists, then convert the .ps to .png
-          if (retval==0) {
-              sprintf(command, "pstoimg -density 200 -antialias -flip cw "
-                               "-quiet -out %.*s.png %.*s",
-                               (int) strlen(search->pgdev) - 7, search->pgdev,
-                               (int) strlen(search->pgdev) - 4, search->pgdev);
-              // printf("'%s'\n", command);
-              if ((retval=system(command))) {
-                  perror("Error running pstoimg in prepfold_plot()");
-                  printf("\n");
-              }
-          }
-          free(command);
+         // Attempt to change the .ps into a nice .png using latex2html...
+         int retval=0;
+         char *command=(char *)malloc(2 * strlen(search->pgdev) + 60);
+         sprintf(command, "pstoimg -density 200 -antialias -flip cw "
+            "-quiet -out %.*s.png %.*s",
+            (int) strlen(search->pgdev) - 7, search->pgdev,
+            (int) strlen(search->pgdev) - 4, search->pgdev);
+         if ((retval=system(command))) {
+            perror("Error running pstoimg in prepfold_plot()");
+            printf("\n");
+         }
+         free(command);
       }
    }
    vect_free(bestprof);

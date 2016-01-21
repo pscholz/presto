@@ -244,12 +244,15 @@ if __name__ == '__main__':
     if len(sys.argv)==1:
         from numpy.random import normal
 
-        print """usage:  python pygaussfit.py bestprof_file prof_stdev
+        print """usage:  python pygaussfit.py input_file [prof_stdev]
 
 Left mouse draws a region roughly boxing where you'll place a gaussian.
     Draw several to fit multiple gaussians.
 Middle mouse performs the fit.
 Right mouse removes the last gaussian from the fit.
+
+The input_file should simply be an ASCII file with columns for pulse phase
+and amplitude.  Comments with "#" are allowed.  .bestprof files work.
 
 Paste the full resulting STDOUT to a '.gaussians' file for use
 in get_TOAs.py or sum_profiles.py with the '-g' parameter as a template."""
@@ -267,7 +270,21 @@ in get_TOAs.py or sum_profiles.py with the '-g' parameter as a template."""
         prof = normal(0.0, noise_stdev, N) + gen_gaussians(params, N)
         filenm = "test"
     else:
-        filenm = sys.argv[1]
+        if sys.argv[1].endswith(".pfd"):
+            print "Input is PFD"
+            # Input is pfd file
+            pfdfn = sys.argv[1]
+            # Check for bestprof
+            if not os.path.exists(pfdfn+".bestprof"):
+                print "Creating bestprof file"
+                # Create bestprof file with show_pfd
+                devnull = open(os.devnull, 'w')
+                subprocess.call(['show_pfd', '-noxwin', pfdfn], 
+                                stdout=devnull)
+                devnull.close()
+            filenm = pfdfn+".bestprof"
+        else:
+            filenm = sys.argv[1]
         prof = read_profile(filenm, normalize=0)
         if len(sys.argv)>=3:
             noise_stdev = float(sys.argv[2])
