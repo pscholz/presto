@@ -119,6 +119,10 @@ void get_telescope_name(int telescope_id, struct spectra_info *s)
         strcpy(s->telescope, "LOFAR");
         s->beam_FWHM = default_beam;
         break;
+    case 12:
+        strcpy(s->telescope, "VLA");
+        s->beam_FWHM = default_beam;
+        break;
     default:
         strcpy(s->telescope, "Unknown");
         s->beam_FWHM = default_beam;
@@ -366,7 +370,7 @@ void read_filterbank_files(struct spectra_info *s)
     s->num_channels = fb.nchans;
     s->samples_per_spectra = s->num_polns * s->num_channels;
     s->bytes_per_spectra = s->bits_per_sample * s->samples_per_spectra / 8;
-    s->spectra_per_subint = 480;        // use this as the blocksize
+    s->spectra_per_subint = 2400;        // use this as the blocksize
     s->bytes_per_subint = s->bytes_per_spectra * s->spectra_per_subint;
     s->samples_per_subint = s->spectra_per_subint * s->samples_per_spectra;
     s->min_spect_per_read = 1;  // Can read a single spectra at a time
@@ -568,7 +572,7 @@ int get_filterbank_rawblock(float *fdata, struct spectra_info *s, int *padding)
   return_block:
     // Apply the corrections that need a full block
 
-    // Invert the band if requested 
+    // Invert the band if requested
     if (s->apply_flipband)
         flip_band(fdata, s);
 
