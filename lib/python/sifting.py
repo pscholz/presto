@@ -3,6 +3,7 @@ import sys
 import re
 import os
 import copy
+import warnings
 
 import numpy as Num
 import matplotlib
@@ -28,6 +29,10 @@ sigma_threshold = 6.0
 c_pow_threshold = 100.0
 # Ignore any candidates where at least one harmonic does not exceed this power
 harm_pow_cutoff = 8.0
+
+HITFIELDS = ("DM", "snr", "sigma")
+HITORDER = 'DM'
+HITTEMPLATE = "  DM=%(DM)6.2f SNR=%(snr)5.2f Sigma=%(sigma)5.2f   "
 
 # If the birds file works well, the following shouldn't
 # be needed at all...
@@ -155,9 +160,14 @@ def cmp_snr(self, other):
     else:
         return retval
 
+def hit_comparison_factory(key):
+    def cmp_hit(self, other):
+        return cmp(float(self[key]), float(other[key]))
+    return cmp_hit
+
 
 def cmp_dms(self, other):
-    return cmp(float(self[0]), float(other[0]))
+    return cmp(float(self['DM']), float(other['DM']))
 
 
 def cmp_freq(self, other):
@@ -185,6 +195,14 @@ class Candidate(object):
         self.snr = 0.0
         self.hits = []
         self.note = ""
+
+
+    def store_additional_info(self, **otherinfo):
+        for key in otherinfo:
+            if hasattr(self, key):
+                raise ValueError("Key %s already exists!" % key)
+            setattr(self, key, otherinfo[key])
+
 
     def add_as_hit(self, other):
         self.hits.extend(other.hits)
@@ -236,7 +254,12 @@ class Candlist(object):
     def sort(self, *args, **kwargs):
         self.cands.sort(*args, **kwargs)
 
-    def plot_summary(self, usefreqs=True):
+    def store_additional_info(self, **otherinfo):
+        for cand in self.cands:
+            cand.store_additional_info(**otherinfo)
+
+    def plot_summary(self, usefreqs=True, ycoord='DM', ylabel=r"DM (pc cm$^{-3}$)",
+                     yscale="linear"):
         """Produce a plot summarizing the sifiting performed.
 
             Input:
@@ -267,11 +290,13 @@ class Candlist(object):
             xlabel = "Period (s)"
             xscale = "loglin"
 
-        dms = Num.array([c.DM for c in allcands])[isort]
+        ydata = Num.array([getattr(c, ycoord) for c in allcands])[isort]
+        if ylabel is None:
+            ylabel = ycoord
         numharms = Num.array([c.numharm for c in allcands])[isort]
 
         # Plot the all candidates 
-        scatt = plt.scatter(xdata, dms, s=sigma_to_size(sigmas), \
+        scatt = plt.scatter(xdata, ydata, s=sigma_to_size(sigmas), \
                                 c=Num.log2(numharms), \
                                 marker='o', alpha=0.7, zorder=-1) 
         plt.set_cmap("Spectral") 
@@ -286,20 +311,22 @@ class Candlist(object):
         plt.axes(ax) # Set scatter plot's axes as current
         plt.xscale(xscale)
         plt.xlabel(xlabel)
-        mindm = Num.min(dms)
-        maxdm = Num.max(dms)
-        dmrange = Num.ptp(dms)
+        miny = Num.min(ydata)
+        maxy = Num.max(ydata)
+        yrange = Num.ptp(ydata)
 
-        # Use log-scale y-axis if max DM > 2000
-        yscale = "log" if maxdm > 2000.0 else "linear"
+        # Restore old behaviour
+        if (yscale == None) and (ycoord == "DM"):
+            # Use log-scale y-axis if max DM > 2000
+            yscale = "log" if maxy > 2000.0 else "linear"
         plt.yscale(yscale)
 
         if yscale is "log":
-            plt.ylim(1.0, maxdm+0.1*dmrange)
+            plt.ylim(1.0, maxy+0.1*yrange)
         else:
-            plt.ylim(mindm-0.1*dmrange, maxdm+0.1*dmrange)
+            plt.ylim(miny-0.1*yrange, maxy+0.1*yrange)
 
-        plt.ylabel(r"DM (pc cm$^{-3}$)") 
+        plt.ylabel(ylabel)  
         if not usefreqs:
             plt.gca().xaxis.set_ticks(Num.concatenate((\
                                         Num.logspace(-4,0,4, endpoint=False), \
@@ -455,8 +482,8 @@ class Candlist(object):
             dms = []
             xdata = []
             for c in cands:
-                sigmas.extend([h.sigma for h in c.hits])
-                dms.extend([h[0] for h in c.hits])
+                sigmas.extend([h['sigma'] for h in c.hits])
+                dms.extend([h['DM'] for h in c.hits])
                 if usefreqs:
                     xval = c.f
                 else:
@@ -924,15 +951,15 @@ class Candlist(object):
 
             # Remove all the candidates where the max sigma DM is 
             # less than the cutoff DM
-            # Recall - A hit is a 3-tuple: (DM, SNR, sigma)
-            imax = Num.argmax(Num.array([hit[2] for hit in currcand.hits]))
-            hitdm, hitsnr, hitsigma = currcand.hits[imax]
-            if float(hitdm) <= low_DM_cutoff:
+            # Recall - A hit is a dict of info containing at least (DM, SNR, sigma)
+            imax = Num.argmax(Num.array([hit['sigma'] for hit in currcand.hits]))
+            hit = currcand.hits[imax]
+            if float(hit['DM']) <= low_DM_cutoff:
                 numremoved += 1
                 num_toolow += 1
                 currcand.note = "Hit with max sigma (%g) has dm (%.2f) " \
                                 "<= low DM cutoff (%.2f) " % \
-                                    (hitsigma, hitdm, low_DM_cutoff)
+                                    (hit['sigma'], hit['DM'], low_DM_cutoff)
                 self.mark_as_bad(ii, 'dmproblem')
                 if verbosity >= 2:
                     print "Removing %s:%d (index: %d)" % \
@@ -943,7 +970,7 @@ class Candlist(object):
             # Remove all the candidates where there are no hits at consecutive DMs
             if len(currcand.hits) > 1:
                 currcand.hits.sort(cmp_dms)
-                dm_indices = Num.asarray([dmdict["%.2f"%currcand.hits[jj][0]]
+                dm_indices = Num.asarray([dmdict["%.2f"%currcand.hits[jj]['DM']]
                                           for jj in range(len(currcand.hits))])
                 min_dmind_diff = min(dm_indices[1:] - dm_indices[:-1])
                 if min_dmind_diff > 1:
@@ -1087,16 +1114,16 @@ class Candlist(object):
         for goodcand in self.cands:
             candfile.write("%s (%d)\n" % (str(goodcand), len(goodcand.hits)))
             if (len(goodcand.hits) > 1):
-                goodcand.hits.sort(cmp_dms)
+                goodcand.hits.sort(hit_comparison_factory(HITORDER))
                 for hit in goodcand.hits:
-                    numstars = int(hit[2]/3.0)
-                    candfile.write("  DM=%6.2f SNR=%5.2f Sigma=%5.2f   "%hit + \
+                    numstars = int(hit['sigma']/3.0)
+                    candfile.write(HITTEMPLATE % hit + \
                                     numstars*'*' + '\n')
         if candfilenm is not None:
             candfile.close()
 
 
-def candlist_from_candfile(filename, trackbad=False, trackdupes=False):
+def candlist_from_candfile(filename, trackbad=False, trackdupes=False, otherinfo=None):
     candfile = open(filename, 'r')
     # First identify the length of the observation searched
     for line in candfile:
@@ -1104,6 +1131,8 @@ def candlist_from_candfile(filename, trackbad=False, trackdupes=False):
             numsamp = int(line.split()[-1])
         if line.startswith(" Width of each time series bin (sec)"):
             dt = float(line.split()[-1])
+        if line.startswith(" Dispersion measure (cm-3 pc)"):
+            dm = float(line.split()[-1])
     tobs = numsamp * dt
 
     # Go back to the start of the file to read the candidates
@@ -1132,10 +1161,18 @@ def candlist_from_candfile(filename, trackbad=False, trackdupes=False):
             p = 1.0 / f       # Spin period in sec
 
             # Add it to the candidates list
-            DMstr = DM_re.search(filename).groups()[0]
-            cands.append(Candidate(candnum, sigma, numharm,
-                                          i_pow_det, c_pow, bin, z, 
-                                          DMstr, filename, tobs))
+            match = DM_re.search(filename)
+            if match is None:
+                DMstr = "%.2f" % dm
+            else:
+                DMstr = match.groups()[0]
+
+            cand = Candidate(candnum, sigma, numharm,
+                             i_pow_det, c_pow, bin, z, 
+                             DMstr, filename, tobs)
+            if otherinfo is not None:
+                cand.store_additional_info(**otherinfo)
+            cands.append(cand)
             candnums.append(candnum)
             last_candnum = candnum
             continue
@@ -1170,7 +1207,7 @@ def candlist_from_candfile(filename, trackbad=False, trackdupes=False):
                     cand.sigma = opt_sigma
                     # Now that S/N and sigma are available
                     # List candidate as a hit of itself
-                    cand.hits = [(cand.DM, cand.snr, cand.sigma)]
+                    cand.hits = [dict([(key, getattr(cand, key)) for key in HITFIELDS])]
                     cand.ipow_det = opt_ipow
             continue
 
@@ -1192,7 +1229,7 @@ def candlist_from_candfile(filename, trackbad=False, trackdupes=False):
                 cand.sigma = opt_sigma
                 # Now that S/N and sigma are available
                 # List candidate as a hit of itself
-                cand.hits = [(cand.DM, cand.snr, cand.sigma)]
+                cand.hits = [dict([(key, getattr(cand, key)) for key in HITFIELDS])]
                 cand.ipow_det = opt_ipow
                 last_goodcandnum = candnum
                 current_goodcandnum = 0
@@ -1200,7 +1237,7 @@ def candlist_from_candfile(filename, trackbad=False, trackdupes=False):
     return Candlist(cands, trackbad=trackbad, trackdupes=trackdupes)
 
 
-def read_candidates(filenms, prelim_reject=True, track=False):
+def read_candidates(filenms, prelim_reject=True, track=False, otherinfo=None):
     """Read in accelsearch candidates from the test ACCEL files.
         Return a Candlist object of Candidate instances.
 
@@ -1210,6 +1247,8 @@ def read_candidates(filenms, prelim_reject=True, track=False):
                 candidates. (Default: True)
             track: If True, keep track of bad/duplicate candidates.
                 (Default: False)
+            otherinfo: A list of dictionaries of extra info to share with
+                candidates read. (Default: None)
 
     """
     candlist = Candlist(trackbad=track, trackdupes=track)
@@ -1217,7 +1256,20 @@ def read_candidates(filenms, prelim_reject=True, track=False):
     if filenms:
         print "\nReading candidates from %d files...." % len(filenms)
         for ii, filenm in enumerate(filenms):
-            curr_candlist = candlist_from_candfile(filenm, trackbad=track, trackdupes=track)
+            if not os.path.getsize(filenm):
+                warnings.warn("Candiate file (%s) is empty. Ignoring it." % filenm)
+                continue
+            try:
+                if otherinfo:
+                    oi = otherinfo[ii]
+                else:
+                    oi = None
+                curr_candlist = candlist_from_candfile(filenm, trackbad=track, 
+                                                       trackdupes=track,
+                                                       otherinfo=oi)
+            except:
+                sys.stderr.write("Error reading %s\n" % filenm)
+                raise
             if prelim_reject:
                 curr_candlist.default_rejection()
             candlist.extend(curr_candlist)
