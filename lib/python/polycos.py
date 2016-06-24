@@ -12,7 +12,7 @@ SPAN_DEFAULT = 60 # span of each poylco in minutes
 
 # Telescope name to TEMPO observatory code conversion
 telescope_to_id = {"GBT": '1', \
-                   "Arecibo":' 3', \
+                   "Arecibo": '3', \
                    "VLA": '6', \
                    "Parkes": '7', \
                    "Jodrell": '8', \
